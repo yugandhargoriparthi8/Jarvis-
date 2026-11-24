@@ -171,7 +171,13 @@ button:active{opacity:.7}
   capture="environment" hidden>
 
 <script>
-const $ = id => document.getElementById(id);
+const NOOP = {
+  hidden: true, value: '', textContent: '', innerHTML: '',
+  placeholder: '', style: {}, parentElement: null,
+  classList: { toggle() {}, add() {}, remove() {} },
+  appendChild() {}, addEventListener() {}
+};
+const $ = id => document.getElementById(id) || Object.assign({}, NOOP);
 const chat = $('chat'), input = $('msg');
 const core = $('core'), coreText = $('coreText');
 
@@ -217,8 +223,8 @@ let apiKey = store.get('jv_key', '') || DEFAULT_KEY;
 let model = store.get('jv_model', '');
 let history = store.get('jv_hist', []);
 let facts = store.get('jv_facts', []);
-let chats = store.get('jv_chats', []);   // saved previous chats
-let openId = store.get('jv_open', null); // id of the open chat
+let chats = store.get('jv_chats', []);
+let openId = store.get('jv_open', null);
 let tab = 'facts';
 let speak = store.get('jv_speak', false);
 let micLang = store.get('jv_lang', 'en-IN');
@@ -285,7 +291,6 @@ async function loadModels() {
   return models;
 }
 
-// Streams the reply while Gemini is still writing it.
 async function stream(m, contents, onText) {
   const url = BASE + 'models/' + m +
     ':streamGenerateContent?alt=sse&key=' +
@@ -351,7 +356,6 @@ const STOP = ['what', 'that', 'this', 'with', 'have', 'your',
   'from', 'tell', 'about', 'please', 'remember', 'there',
   'where', 'when', 'which', 'would', 'could', 'should'];
 
-// Looks into older chats for topics related to the new question.
 function recall() {
   const others = chats.filter(c => c.id !== openId);
   if (!others.length) return '';
@@ -418,7 +422,6 @@ function keepFacts() {
   if (!$('memPanel').hidden && tab === 'facts') renderMem();
 }
 
-// Facts tagged by the AI in its reply.
 function saveFacts(t) {
   const re = /\[{1,2}\s*(MEM|FORGET)\s*:([\s\S]*?)\]{1,2}/g;
   let m;
@@ -428,8 +431,6 @@ function saveFacts(t) {
   keepFacts();
 }
 
-// Facts caught directly from what the user typed or said,
-// so memory never depends only on the AI remembering a tag.
 function localLearn(t) {
   const s = t.trim();
   if (!s || s.slice(-1) === '?') return;
@@ -490,12 +491,10 @@ function shrink(file, max) {
   });
 }
 
-// ===== CHAT HISTORY (previous chats) =====
 function tabLabels() {
   $('tabChats').textContent = 'CHATS (' + chats.length + ')';
 }
 
-// Saves the current chat into the CHATS list (auto, after replies).
 function saveChat() {
   if (!history.length) return;
   if (!openId) {
@@ -531,7 +530,7 @@ function openChat(id) {
   if (busy) return;
   const c = chats.find(x => x.id === id);
   if (!c) return;
-  saveChat(); // keep the chat that is open right now
+  saveChat();
   openId = c.id;
   history = c.msgs.slice();
   store.set('jv_hist', history);
@@ -636,206 +635,14 @@ function say(t) {
   speechSynthesis.speak(u);
 }
 
-async function send(text, img) {
-  if (busy || !text) return;
-  if (!apiKey && !askKey()) {
-    add('J.A.R.V.I.S: API key required, Boss. ' +
-      'Tap API KEY.', 'ai');
-    return;
-  }
-  busy = true;
-  lastAsk = text;
-  localLearn(text);
-  core.classList.add('busy');
-  coreText.textContent = 'PROCESSING...';
-  const u = add('YOU: ' + text, 'user');
-  if (img) {
-    const pic = new Image();
-    pic.src = img;
-    pic.className = 'shot';
-    u.appendChild(pic);
-  }
-  input.value = '';
-  const out = add('J.A.R.V.I.S: ...', 'ai');
-  const parts = [{ text: text }];
-  if (img) {
-    parts.push({ inlineData: {
-      mimeType: 'image/jpeg', data: img.split(',')[1]
-    } });
-  }
-  const contents = history.concat([{ role: 'user', parts: parts }]);
-  const show = t => {
-    out.textContent = 'J.A.R.V.I.S: ' + stripMem(t);
-    chat.scrollTop = chat.scrollHeight;
-  };
-  let err = '';
+let timers = store.get('jv_timers', []);
+let notes = store.get('jv_notes', []);
 
-  try {
-    let order = model ? [model] : [];
-    const tried = {};
-    for (let pass = 0; pass < 2; pass++) {
-      if (pass === 1) {
-        order = (await loadModels())
-          .filter(m => !tried[m]);
-      }
-      for (const m of order) {
-        tried[m] = 1;
-        const r = await stream(m, contents, show);
-        if (r.ok) {
-          model = m;
-          store.set('jv_model', m);
-          const reply = stripMem(r.text);
-          saveFacts(r.text);
-          show(reply);
-          const mark = img ? ' [photo]' : '';
-          history = history.concat([
-            { role: 'user', parts: [{ text: text + mark }] },
-            { role: 'model', parts: [{ text: reply }] }
-          ]).slice(-40);
-          store.set('jv_hist', history);
-          saveChat();
-          setRow('stAI', '● ONLINE', true);
-          if (speak) say(reply);
-          return;
-        }
-        err = r.msg;
-        if ([400, 401, 403].includes(r.code)) {
-          pass = 2;
-          break;
-        }
-      }
-    }
-    out.textContent = 'J.A.R.V.I.S: ERROR - ' + err;
-    setRow('stAI', '○ OFFLINE', false);
-  } catch (e) {
-    out.textContent = 'J.A.R.V.I.S: Cannot reach Google (' +
-      e.message + '). Check internet, VPN, ad blocker.';
-    setRow('stAI', '○ OFFLINE', false);
-  } finally {
-    busy = false;
-    core.classList.remove('busy');
-    coreText.textContent = 'CORE ACTIVE';
-    refresh();
-  }
-}
-
-$('send').onclick = () => send(input.value.trim());
-input.addEventListener('keydown', e => {
-  if (e.key === 'Enter') send(input.value.trim());
-});
-$('keyBtn').onclick = askKey;
-$('voiceBtn').onclick = () => {
-  speak = !speak;
-  store.set('jv_speak', speak);
-  if (!speak && 'speechSynthesis' in window) {
-    speechSynthesis.cancel();
-  }
-  refresh();
-};
-$('langBtn').onclick = () => {
-  micLang = micLang === 'en-IN' ? 'te-IN' : 'en-IN';
-  store.set('jv_lang', micLang);
-  refresh();
-};
-$('clearBtn').onclick = () => {
-  saveChat(); // the chat is kept in MEM > CHATS
-  history = [];
-  openId = null;
-  store.set('jv_hist', history);
-  store.set('jv_open', openId);
-  chat.innerHTML = '';
-  refresh();
+const LANGS = {
+  telugu: 'te', english: 'en', hindi: 'hi', tamil: 'ta',
+  kannada: 'kn', malayalam: 'ml', french: 'fr', spanish: 'es',
+  german: 'de', urdu: 'ur', arabic: 'ar', japanese: 'ja',
+  chinese: 'zh', korean: 'ko', russian: 'ru'
 };
 
-$('memBtn').onclick = () => {
-  const p = $('memPanel');
-  p.hidden = !p.hidden;
-  if (!p.hidden) showTab(tab);
-};
-$('tabFacts').onclick = () => showTab('facts');
-$('tabChats').onclick = () => showTab('chats');
-$('chatSearch').oninput = renderChats;
-$('memWipe').onclick = () => {
-  if (!confirm('Erase all long-term memory?')) return;
-  facts = [];
-  store.set('jv_facts', facts);
-  renderMem();
-  refresh();
-};
-$('cam').onclick = () => $('file').click();
-$('file').onchange = async e => {
-  const f = e.target.files[0];
-  e.target.value = '';
-  if (!f) return;
-  try {
-    const pic = await shrink(f, 1024);
-    const q = input.value.trim() ||
-      'What do you see? Describe it briefly.';
-    send(q, pic);
-  } catch (err) {
-    add('J.A.R.V.I.S: Could not read that photo, Boss.', 'ai');
-  }
-};
-
-const SR = window.SpeechRecognition ||
-  window.webkitSpeechRecognition;
-
-function micMsg(t) { add('J.A.R.V.I.S: ' + t, 'ai'); }
-
-// Same simple flow that worked before; it only adds a clear
-// message when the browser reports a problem.
-function startMic(lang) {
-  const r = new SR();
-  r.lang = lang;
-  r.interimResults = false;
-  r.onresult = e => send(e.results[0][0].transcript.trim());
-  r.onerror = e => {
-    $('mic').textContent = '🎤';
-    const c = e.error;
-    if (c === 'language-not-supported' && lang !== 'en-IN') {
-      micMsg('This language is not supported for voice here. ' +
-        'Using English.');
-      startMic('en-IN');
-    } else if (c === 'not-allowed' || c === 'service-not-allowed') {
-      micMsg('Microphone is blocked, Boss. Tap the lock icon ' +
-        'next to the web address, open Permissions, allow ' +
-        'Microphone, then reload the page.');
-    } else if (c === 'no-speech') {
-      micMsg('I did not hear anything, Boss. Tap the mic ' +
-        'and speak.');
-    } else if (c === 'network') {
-      micMsg('Voice needs internet. Check your connection.');
-    } else if (c !== 'aborted') {
-      micMsg('Voice error: ' + c);
-    }
-  };
-  r.onend = () => { $('mic').textContent = '🎤'; };
-  $('mic').textContent = '…';
-  try {
-    r.start();
-  } catch (err) {
-    $('mic').textContent = '🎤';
-  }
-}
-
-$('mic').onclick = () => {
-  if (!SR) {
-    add('J.A.R.V.I.S: Voice input is not supported ' +
-      'in this browser, Boss.', 'ai');
-    return;
-  }
-  startMic(micLang);
-};
-
-window.addEventListener('online', refresh);
-window.addEventListener('offline', refresh);
-
-renderHistory();
-if (history.length && !openId) saveChat();
-tabLabels();
-if (apiKey) setRow('stAI', '● READY', true);
-refresh();
-</script>
-</body>
-</html>
-
+const SITES = {
