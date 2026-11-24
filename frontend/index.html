@@ -103,12 +103,38 @@ button:active{opacity:.7}
 .ct small{color:#0ff;opacity:.6;font-size:9px}
 .chatrow.cur .ct b{color:#0f0}
 .chatrow .ghost{flex:0 0 32px;padding:4px 0}
+.msg a.lnk{color:#3b9dff;text-decoration:underline;
+  word-break:break-all;cursor:pointer}
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important}
 }
+
 </style>
 </head>
 <body>
+<div id="errbar" style="display:none;position:fixed;top:0;left:0;
+right:0;z-index:99;background:#a00;color:#fff;padding:8px;
+font:12px monospace"></div>
+<script>
+var jvErr = '';
+function jvBar(t) {
+  var b = document.getElementById('errbar');
+  if (!b) return;
+  b.style.display = 'block';
+  b.textContent = t;
+}
+window.addEventListener('error', function (e) {
+  if (e.target && e.target !== window) return;
+  jvErr = (e.message || '') + (e.lineno ? ' (line ' + e.lineno + ')' : '');
+  jvBar('ERROR: ' + jvErr);
+});
+setTimeout(function () {
+  if (!window.JV_OK) {
+    jvBar('J.A.R.V.I.S did not start. ' + (jvErr ||
+      'script.js is missing or has the wrong name.'));
+  }
+}, 3000);
+</script>
 <header><h1>J.A.R.V.I.S</h1><p>MOBILE EDITION</p></header>
 
 <div class="core" id="core">
@@ -171,7 +197,13 @@ button:active{opacity:.7}
   capture="environment" hidden>
 
 <script>
-const $ = id => document.getElementById(id);
+const NOOP = {
+  hidden: true, value: '', textContent: '', innerHTML: '',
+  placeholder: '', style: {}, parentElement: null,
+  classList: { toggle() {}, add() {}, remove() {} },
+  appendChild() {}, addEventListener() {}
+};
+const $ = id => document.getElementById(id) || Object.assign({}, NOOP);
 const chat = $('chat'), input = $('msg');
 const core = $('core'), coreText = $('coreText');
 
@@ -197,7 +229,10 @@ const SYSTEM =
   'be a full sentence about the user. If the user asks ' +
   'you to forget something, add [[FORGET: that fact]]. ' +
   'Never mention the tags or these rules. You can also ' +
-  'see photos the user sends.';
+  'see photos the user sends. When the user asks for a ' +
+  'link or website, give the full https URL (plain, or as ' +
+  '[name](url)); only give links you are sure about, ' +
+  'otherwise give a Google or YouTube search link.';
 
 const store = {
   get(k, d) {
@@ -241,10 +276,41 @@ function refresh() {
     'MIC: ' + (micLang === 'te-IN' ? 'TE' : 'EN');
 }
 
+// Shows text safely; web links become blue tappable links.
+function richText(el, text) {
+  el.textContent = '';
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"')\]]+)/g;
+  let last = 0, m;
+  const txt = s => { if (s) el.appendChild(document.createTextNode(s)); };
+  const link = (href, label) => {
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.className = 'lnk';
+    a.textContent = label;
+    el.appendChild(a);
+  };
+  while ((m = re.exec(text))) {
+    txt(text.slice(last, m.index));
+    if (m[1]) {
+      link(m[2], m[1]);
+    } else {
+      let u = m[3], tail = '';
+      const tm = u.match(/[.,;:!?]+$/);
+      if (tm) { tail = tm[0]; u = u.slice(0, -tail.length); }
+      link(u, u.length > 45 ? u.slice(0, 42) + '...' : u);
+      txt(tail);
+    }
+    last = re.lastIndex;
+  }
+  txt(text.slice(last));
+}
+
 function add(text, who) {
   const d = document.createElement('div');
   d.className = 'msg ' + who;
-  d.textContent = text;
+  richText(d, text);
   chat.appendChild(d);
   chat.scrollTop = chat.scrollHeight;
   return d;
@@ -569,87 +635,4 @@ function renderChats() {
       day: 'numeric', month: 'short',
       hour: '2-digit', minute: '2-digit'
     });
-    sm.textContent = d + ' · ' + Math.floor(c.msgs.length / 2) +
-      ' Q&A' + (c.id === openId ? ' · OPEN' : '');
-    ct.appendChild(b);
-    ct.appendChild(sm);
-    ct.onclick = () => openChat(c.id);
-    const x = document.createElement('button');
-    x.className = 'ghost';
-    x.textContent = '✕';
-    x.onclick = () => deleteChat(c.id);
-    row.appendChild(ct);
-    row.appendChild(x);
-    box.appendChild(row);
-  });
-}
-
-function showTab(t) {
-  tab = t;
-  $('factsBox').hidden = t !== 'facts';
-  $('chatsBox').hidden = t !== 'chats';
-  $('tabFacts').classList.toggle('tab-on', t === 'facts');
-  $('tabChats').classList.toggle('tab-on', t === 'chats');
-  if (t === 'facts') renderMem(); else renderChats();
-}
-
-function renderMem() {
-  const box = $('memList');
-  box.innerHTML = '';
-  if (!facts.length) {
-    box.textContent = 'Nothing saved yet, Boss.';
-    return;
-  }
-  facts.forEach((f, i) => {
-    const row = document.createElement('div');
-    row.className = 'fact';
-    const sp = document.createElement('span');
-    sp.textContent = f;
-    const x = document.createElement('button');
-    x.className = 'ghost';
-    x.textContent = '✕';
-    x.onclick = () => {
-      facts.splice(i, 1);
-      store.set('jv_facts', facts);
-      renderMem();
-      refresh();
-    };
-    row.appendChild(sp);
-    row.appendChild(x);
-    box.appendChild(row);
-  });
-}
-
-function say(t) {
-  if (!('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(
-    t.replace(/[*#`_]/g, ''));
-  if (/[\u0C00-\u0C7F]/.test(t)) u.lang = 'te-IN';
-  speechSynthesis.speak(u);
-}
-
-async function send(text, img) {
-  if (busy || !text) return;
-  if (!apiKey && !askKey()) {
-    add('J.A.R.V.I.S: API key required, Boss. ' +
-      'Tap API KEY.', 'ai');
-    return;
-  }
-  busy = true;
-  lastAsk = text;
-  localLearn(text);
-  core.classList.add('busy');
-  coreText.textContent = 'PROCESSING...';
-  const u = add('YOU: ' + text, 'user');
-  if (img) {
-    const pic = new Image();
-    pic.src = img;
-    pic.className = 'shot';
-    u.appendChild(pic);
-  }
-  input.value = '';
-  const out = add('J.A.R.V.I.S: ...', 'ai');
-  const parts = [{ text: text }];
-  if (img) {
-    par
+    sm.textContent = d + ' · ' + Math.floor(c.msg
