@@ -171,13 +171,7 @@ button:active{opacity:.7}
   capture="environment" hidden>
 
 <script>
-const NOOP = {
-  hidden: true, value: '', textContent: '', innerHTML: '',
-  placeholder: '', style: {}, parentElement: null,
-  classList: { toggle() {}, add() {}, remove() {} },
-  appendChild() {}, addEventListener() {}
-};
-const $ = id => document.getElementById(id) || Object.assign({}, NOOP);
+const $ = id => document.getElementById(id);
 const chat = $('chat'), input = $('msg');
 const core = $('core'), coreText = $('coreText');
 
@@ -635,14 +629,27 @@ function say(t) {
   speechSynthesis.speak(u);
 }
 
-let timers = store.get('jv_timers', []);
-let notes = store.get('jv_notes', []);
-
-const LANGS = {
-  telugu: 'te', english: 'en', hindi: 'hi', tamil: 'ta',
-  kannada: 'kn', malayalam: 'ml', french: 'fr', spanish: 'es',
-  german: 'de', urdu: 'ur', arabic: 'ar', japanese: 'ja',
-  chinese: 'zh', korean: 'ko', russian: 'ru'
-};
-
-const SITES = {
+async function send(text, img) {
+  if (busy || !text) return;
+  if (!apiKey && !askKey()) {
+    add('J.A.R.V.I.S: API key required, Boss. ' +
+      'Tap API KEY.', 'ai');
+    return;
+  }
+  busy = true;
+  lastAsk = text;
+  localLearn(text);
+  core.classList.add('busy');
+  coreText.textContent = 'PROCESSING...';
+  const u = add('YOU: ' + text, 'user');
+  if (img) {
+    const pic = new Image();
+    pic.src = img;
+    pic.className = 'shot';
+    u.appendChild(pic);
+  }
+  input.value = '';
+  const out = add('J.A.R.V.I.S: ...', 'ai');
+  const parts = [{ text: text }];
+  if (img) {
+    par
